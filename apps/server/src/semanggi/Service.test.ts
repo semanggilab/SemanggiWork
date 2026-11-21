@@ -328,3 +328,110 @@ it.effect("executes an authorized RPC mutation and replays its receipt", () => {
     Effect.provide(Service.layer.pipe(Layer.provide(Storage.layerFromPath(":memory:")))),
   );
 });
+
+it.effect(
+  "links workspaces with a single default, promotes on unlink, and rejects archived projects",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* Service.SemanggiService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* service.createProject(actor, { id: "wp", name: "Workspace project" });
+      const link = (t3ProjectId: string, isDefault: boolean) =>
+        service.linkWorkspace(actor, {
+          projectId: "wp",
+          environmentId: "env",
+          t3ProjectId,
+          isDefault,
+        });
+      yield* link("b", false);
+      yield* link("a", false);
+      yield* link("a", false); // idempotent retry
+      const read = () => service.listWorkspaceLinks("env");
+      assert.deepEqual(
+        (yield* read()).map((row) => [row.t3_project_id, row.is_default]),
+        [
+          ["a", 0],
+          ["b", 1],
+        ],
+      );
+      yield* link("a", true);
+      assert.deepEqual(
+        (yield* read()).map((row) => [row.t3_project_id, row.is_default]),
+        [
+          ["a", 1],
+          ["b", 0],
+        ],
+      );
+      yield* service.unlinkWorkspace(actor, {
+        projectId: "wp",
+        environmentId: "env",
+        t3ProjectId: "a",
+      });
+      assert.deepEqual(
+        (yield* read()).map((row) => [row.t3_project_id, row.is_default]),
+        [["b", 1]],
+      );
+      // Another environment is unaffected, and a foreign audit context is refused.
+      assert.deepEqual(yield* service.listWorkspaceLinks("other"), []);
+      const forged = yield* Effect.flip(
+        service.linkWorkspace(actor, {
+          projectId: "wp",
+          environmentId: "other",
+          t3ProjectId: "x",
+          isDefault: false,
+        }),
+      );
+      assert.equal(forged._tag, "SemanggiValidationError");
+      yield* service.setProjectArchived(actor, { id: "wp", archived: true, expectedRevision: 1 });
+      const archived = yield* Effect.flip(link("c", false));
+      assert.equal(archived._tag, "SemanggiValidationError");
+      assert.deepEqual(yield* read(), []); // archived projects are not listed
+      const events = yield* sql<{
+        event_type: string;
+      }>`SELECT event_type FROM sh_audit WHERE event_type LIKE 'workspace.%'`;
+      assert.equal(events.length, 5);
+    }).pipe(Effect.provide(auditedLayer)),
+);
+
+it.effect("reorders sibling sections atomically and rejects stale revisions and edge moves", () =>
+  Effect.gen(function* () {
+    const service = yield* Service.SemanggiService;
+    yield* service.createProject(actor, { id: "rp", name: "Reorder" });
+    for (const id of ["s1", "s2", "s3"]) {
+      yield* service.createSection(actor, { id, projectId: "rp", parentId: null, name: id });
+    }
+    const order = () =>
+      service
+        .listSections("rp")
+        .pipe(Effect.map((rows) => rows.map(({ id, revision }) => [id, revision])));
+    assert.deepEqual(yield* order(), [
+      ["s1", 1],
+      ["s2", 1],
+      ["s3", 1],
+    ]);
+    const moved = yield* service.reorderSection(actor, {
+      id: "s3",
+      direction: "up",
+      expectedRevision: 1,
+    });
+    assert.equal(moved.revision, 2);
+    assert.deepEqual(yield* order(), [
+      ["s1", 1],
+      ["s3", 2],
+      ["s2", 2],
+    ]);
+    const stale = yield* Effect.flip(
+      service.reorderSection(actor, { id: "s3", direction: "up", expectedRevision: 1 }),
+    );
+    assert.equal(stale._tag, "SemanggiRevisionConflict");
+    yield* service.reorderSection(actor, { id: "s3", direction: "up", expectedRevision: 2 });
+    const edge = yield* Effect.flip(
+      service.reorderSection(actor, { id: "s3", direction: "up", expectedRevision: 3 }),
+    );
+    assert.equal(edge._tag, "SemanggiValidationError");
+    assert.deepEqual(
+      (yield* order()).map(([id]) => id),
+      ["s3", "s1", "s2"],
+    );
+  }).pipe(Effect.provide(auditedLayer)),
+);

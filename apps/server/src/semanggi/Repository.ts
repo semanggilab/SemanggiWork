@@ -204,27 +204,39 @@ export const moveSectionSubtree = Effect.fn("semanggi.moveSectionSubtree")(funct
       }>`SELECT project_id, depth FROM sh_sections WHERE id = ${input.id} AND revision = ${input.expectedRevision}`;
       const root = roots[0];
       if (!root) return yield* Effect.fail(new SemanggiRevisionConflict());
-      const parents = input.parentId === null ? [] : yield* sql<{
-        project_id: string;
-        depth: number;
-      }>`SELECT project_id, depth FROM sh_sections WHERE id = ${input.parentId}`;
+      const parents =
+        input.parentId === null
+          ? []
+          : yield* sql<{
+              project_id: string;
+              depth: number;
+            }>`SELECT project_id, depth FROM sh_sections WHERE id = ${input.parentId}`;
       const parent = parents[0];
       if (parent && parent.project_id !== root.project_id) {
-        return yield* new SemanggiValidationError({ message: "Section parent does not belong to this project." });
+        return yield* new SemanggiValidationError({
+          message: "Section parent does not belong to this project.",
+        });
       }
-      const descendants = yield* sql<{ id: string; depth: number }>`WITH RECURSIVE subtree(id, depth) AS (
+      const descendants = yield* sql<{
+        id: string;
+        depth: number;
+      }>`WITH RECURSIVE subtree(id, depth) AS (
         SELECT id, depth FROM sh_sections WHERE id = ${input.id}
         UNION ALL SELECT child.id, child.depth FROM sh_sections child JOIN subtree ON child.parent_id = subtree.id
       ) SELECT id, depth FROM subtree`;
       if (input.parentId !== null && descendants.some(({ id }) => id === input.parentId)) {
-        return yield* new SemanggiValidationError({ message: "Section cannot be moved into its own subtree." });
+        return yield* new SemanggiValidationError({
+          message: "Section cannot be moved into its own subtree.",
+        });
       }
       const nextRootDepth = parent ? parent.depth + 1 : 1;
       const depthDelta = nextRootDepth - root.depth;
       if (descendants.some(({ depth }) => depth + depthDelta > 4)) {
         return yield* new SemanggiValidationError({ message: "Section depth cannot exceed four." });
       }
-      const nextPositionRows = yield* sql<{ next_position: number }>`SELECT COALESCE(MAX(position) + 1, 1) AS next_position
+      const nextPositionRows = yield* sql<{
+        next_position: number;
+      }>`SELECT COALESCE(MAX(position) + 1, 1) AS next_position
         FROM sh_sections WHERE project_id = ${root.project_id} AND parent_id IS ${input.parentId} AND id != ${input.id}`;
       const nextPosition = nextPositionRows[0]?.next_position ?? 1;
       for (const descendant of descendants) {
@@ -355,6 +367,98 @@ export const executeSessionMove = Effect.fn("semanggi.executeSessionMove")(funct
       yield* sql`INSERT INTO sh_audit(actor_id, environment_id, request_id, event_type, entity_type, entity_id, revision)
       VALUES (${actorId}, ${input.scope.environmentId}, ${input.requestId}, 'session.move', 'session', ${input.operation.sessionId}, ${revision})`;
       return revision;
+    }),
+  );
+});
+
+export const listWorkspaceLinks = Effect.fn("semanggi.listWorkspaceLinks")(function* (
+  environmentId: string,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{ project_id: string; t3_project_id: string; is_default: number }>`
+    SELECT l.project_id, l.t3_project_id, l.is_default FROM sh_workspace_links l
+    JOIN sh_projects p ON p.id = l.project_id AND p.archived_at IS NULL
+    WHERE l.environment_id = ${environmentId} ORDER BY l.project_id, l.t3_project_id`;
+});
+
+/** Idempotent. The first link of a Project in an environment becomes its default; `isDefault` moves it. */
+export const linkWorkspace = Effect.fn("semanggi.linkWorkspace")(function* (input: {
+  readonly projectId: string;
+  readonly environmentId: string;
+  readonly t3ProjectId: string;
+  readonly isDefault: boolean;
+}) {
+  const sql = yield* SqlClient.SqlClient;
+  const project = yield* sql<{ archived_at: string | null }>`
+    SELECT archived_at FROM sh_projects WHERE id = ${input.projectId}`;
+  if (!project[0] || project[0].archived_at !== null) {
+    return yield* new SemanggiValidationError({ message: "Project is missing or archived." });
+  }
+  const existing = yield* sql<{ is_default: number }>`
+    SELECT is_default FROM sh_workspace_links WHERE project_id = ${input.projectId}
+    AND environment_id = ${input.environmentId} AND t3_project_id = ${input.t3ProjectId}`;
+  const others = yield* sql<{ n: number }>`
+    SELECT COUNT(*) AS n FROM sh_workspace_links WHERE project_id = ${input.projectId}
+    AND environment_id = ${input.environmentId} AND t3_project_id != ${input.t3ProjectId}`;
+  const makeDefault = input.isDefault || (others[0]?.n ?? 0) === 0 || existing[0]?.is_default === 1;
+  if (makeDefault) {
+    yield* sql`UPDATE sh_workspace_links SET is_default = 0 WHERE project_id = ${input.projectId}
+      AND environment_id = ${input.environmentId} AND t3_project_id != ${input.t3ProjectId}`;
+  }
+  yield* sql`INSERT INTO sh_workspace_links(project_id, environment_id, t3_project_id, is_default)
+    VALUES (${input.projectId}, ${input.environmentId}, ${input.t3ProjectId}, ${makeDefault ? 1 : 0})
+    ON CONFLICT(project_id, environment_id, t3_project_id) DO UPDATE SET is_default = excluded.is_default`;
+});
+
+/** Removes the link; if it was the default, the lowest remaining t3_project_id becomes default. */
+export const unlinkWorkspace = Effect.fn("semanggi.unlinkWorkspace")(function* (input: {
+  readonly projectId: string;
+  readonly environmentId: string;
+  readonly t3ProjectId: string;
+}) {
+  const sql = yield* SqlClient.SqlClient;
+  const removed = yield* sql<{ is_default: number }>`DELETE FROM sh_workspace_links
+    WHERE project_id = ${input.projectId} AND environment_id = ${input.environmentId}
+    AND t3_project_id = ${input.t3ProjectId} RETURNING is_default`;
+  if (removed[0]?.is_default === 1) {
+    yield* sql`UPDATE sh_workspace_links SET is_default = 1 WHERE rowid = (
+      SELECT rowid FROM sh_workspace_links WHERE project_id = ${input.projectId}
+      AND environment_id = ${input.environmentId} ORDER BY t3_project_id LIMIT 1)`;
+  }
+});
+
+/** Swaps a Section with its previous/next sibling. Siblings are renumbered so ties cannot stall a move. */
+export const reorderSection = Effect.fn("semanggi.reorderSection")(function* (input: {
+  readonly id: string;
+  readonly direction: "up" | "down";
+  readonly expectedRevision: number;
+}) {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const rows = yield* sql<{ project_id: string; parent_id: string | null }>`
+        SELECT project_id, parent_id FROM sh_sections
+        WHERE id = ${input.id} AND revision = ${input.expectedRevision}`;
+      const target = rows[0];
+      if (!target) return yield* Effect.fail(new SemanggiRevisionConflict());
+      const siblings = yield* sql<{ id: string }>`SELECT id FROM sh_sections
+        WHERE project_id = ${target.project_id} AND parent_id IS ${target.parent_id}
+        ORDER BY position, normalized_name, id`;
+      const index = siblings.findIndex(({ id }) => id === input.id);
+      const swapWith = input.direction === "up" ? index - 1 : index + 1;
+      const neighbor = siblings[swapWith];
+      if (!neighbor) {
+        return yield* new SemanggiValidationError({ message: "Section is already at the edge." });
+      }
+      const order = siblings.map(({ id }) => id);
+      order[index] = neighbor.id;
+      order[swapWith] = input.id;
+      for (const [position, id] of order.entries()) {
+        const bump = id === input.id || id === neighbor.id ? 1 : 0;
+        yield* sql`UPDATE sh_sections SET position = ${position + 1}, revision = revision + ${bump}
+          WHERE id = ${id}`;
+      }
+      return { revision: input.expectedRevision + 1 };
     }),
   );
 });

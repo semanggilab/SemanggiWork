@@ -278,6 +278,7 @@ import { requestUrl } from "./requestUrl.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
+const isSemanggiValidationError = Schema.is(SemanggiRepository.SemanggiValidationError);
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -2325,9 +2326,10 @@ export const layerWsRpc = (
             search: Option.isSome(semanggiIntegration),
           }),
         [WS_METHODS.semanggiCatalog]: (_input) =>
-          Effect.gen(function* () {
+          Effect.fn("ws.semanggiCatalog")(function* () {
             const projects = yield* semanggi.listProjects();
             const sessions = yield* semanggi.listCatalogSessions(environmentId);
+            const workspaceLinks = yield* semanggi.listWorkspaceLinks(environmentId);
             const sectionsByProject = yield* Effect.forEach(projects, (project) =>
               semanggi.listSections(project.id).pipe(
                 Effect.map((sections) => ({
@@ -2344,13 +2346,22 @@ export const layerWsRpc = (
             );
             return {
               projects,
+              workspaceLinks: workspaceLinks.map((link) => ({
+                projectId: link.project_id,
+                t3ProjectId: link.t3_project_id,
+                isDefault: link.is_default === 1,
+              })),
               sectionsByProject,
               sessions: sessions.map((session) => ({
-                sessionId: session.id, projectId: session.project_id, sectionId: session.section_id,
-                mode: session.mode, revision: session.revision, threadId: session.thread_id,
+                sessionId: session.id,
+                projectId: session.project_id,
+                sectionId: session.section_id,
+                mode: session.mode,
+                revision: session.revision,
+                threadId: session.thread_id,
               })),
             };
-          }).pipe(Effect.mapError(() => new SemanggiRequestError({ reason: "storage_error" }))),
+          })().pipe(Effect.mapError(() => new SemanggiRequestError({ reason: "storage_error" }))),
         [WS_METHODS.semanggiMutate]: (input) =>
           serverEnvironment.getDescriptor.pipe(
             Effect.flatMap(({ environmentId }) => {
@@ -2363,28 +2374,56 @@ export const layerWsRpc = (
                 case "project.create":
                   return semanggi.createProject(context, input).pipe(Effect.as({ revision: 1 }));
                 case "project.rename":
-                  return semanggi.renameProject(context, input).pipe(Effect.map((revision) => ({ revision })));
+                  return semanggi
+                    .renameProject(context, input)
+                    .pipe(Effect.map((revision) => ({ revision })));
                 case "project.archive":
-                  return semanggi.setProjectArchived(context, input).pipe(Effect.map((revision) => ({ revision })));
+                  return semanggi
+                    .setProjectArchived(context, input)
+                    .pipe(Effect.map((revision) => ({ revision })));
                 case "section.create":
                   return semanggi.createSection(context, input).pipe(Effect.as({ revision: 1 }));
                 case "section.rename":
-                  return semanggi.renameSection(context, input).pipe(Effect.map((revision) => ({ revision })));
+                  return semanggi
+                    .renameSection(context, input)
+                    .pipe(Effect.map((revision) => ({ revision })));
                 case "section.move":
                   return semanggi.moveSectionSubtree(context, input);
+                case "section.reorder":
+                  return semanggi.reorderSection(context, input);
+                case "workspace.link":
+                  return semanggi
+                    .linkWorkspace(context, {
+                      projectId: input.projectId,
+                      environmentId,
+                      t3ProjectId: input.t3ProjectId,
+                      isDefault: input.isDefault,
+                    })
+                    .pipe(Effect.as({ revision: 1 }));
+                case "workspace.unlink":
+                  return semanggi
+                    .unlinkWorkspace(context, {
+                      projectId: input.projectId,
+                      environmentId,
+                      t3ProjectId: input.t3ProjectId,
+                    })
+                    .pipe(Effect.as({ revision: 1 }));
                 case "section.delete":
-                  return semanggi.deleteLeafSection(context, input).pipe(Effect.as({ revision: input.expectedRevision }));
+                  return semanggi
+                    .deleteLeafSection(context, input)
+                    .pipe(Effect.as({ revision: input.expectedRevision }));
               }
             }),
-            Effect.mapError((error) =>
-              new SemanggiRequestError({
-                reason:
-                  error instanceof SemanggiRepository.SemanggiRevisionConflict
-                    ? "conflict"
-                    : Schema.is(SemanggiRepository.SemanggiValidationError)(error)
-                      ? "invalid_request"
-                      : "storage_error",
-              }),
+            Effect.mapError(
+              (error) =>
+                new SemanggiRequestError({
+                  reason:
+                    error instanceof SemanggiRepository.SemanggiRevisionConflict
+                      ? "conflict"
+                      : isSemanggiValidationError(error)
+                        ? "invalid_request"
+                        : "storage_error",
+                }),
             ),
           ),
         [WS_METHODS.semanggiSessionMove]: (input) =>

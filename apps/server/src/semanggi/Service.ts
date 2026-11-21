@@ -48,7 +48,11 @@ export class SemanggiService extends Context.Service<
     readonly createSection: Audited<typeof Repository.createSection>;
     readonly renameSection: Audited<typeof Repository.renameSection>;
     readonly moveSectionSubtree: Audited<typeof Repository.moveSectionSubtree>;
+    readonly reorderSection: Audited<typeof Repository.reorderSection>;
     readonly deleteLeafSection: Audited<typeof Repository.deleteLeafSection>;
+    readonly listWorkspaceLinks: Bound<typeof Repository.listWorkspaceLinks>;
+    readonly linkWorkspace: Audited<typeof Repository.linkWorkspace>;
+    readonly unlinkWorkspace: Audited<typeof Repository.unlinkWorkspace>;
     readonly createSession: Audited<typeof Repository.createSession>;
     readonly bindThread: Audited<typeof Repository.bindThread>;
     readonly executeSessionMove: Bound<typeof Repository.executeSessionMove>;
@@ -103,7 +107,9 @@ const make = Effect.gen(function* () {
       Repository.listSessions(input).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
     ),
     listCatalogSessions: Effect.fn("SemanggiService.listCatalogSessions")((environmentId) =>
-      Repository.listCatalogSessions(environmentId).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+      Repository.listCatalogSessions(environmentId).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      ),
     ),
     findSessionByThread: Effect.fn("SemanggiService.findSessionByThread")(
       (environmentId, threadId) =>
@@ -171,6 +177,16 @@ const make = Effect.gen(function* () {
         (result) => result.revision,
       ),
     ),
+    reorderSection: Effect.fn("SemanggiService.reorderSection")((context, input) =>
+      audited(
+        context,
+        "section.reorder",
+        "section",
+        input.id,
+        Repository.reorderSection(input),
+        (result) => result.revision,
+      ),
+    ),
     deleteLeafSection: Effect.fn("SemanggiService.deleteLeafSection")((context, input) =>
       audited(
         context,
@@ -187,6 +203,43 @@ const make = Effect.gen(function* () {
         }),
         () => input.expectedRevision,
       ),
+    ),
+    listWorkspaceLinks: Effect.fn("SemanggiService.listWorkspaceLinks")((environmentId) =>
+      Repository.listWorkspaceLinks(environmentId).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      ),
+    ),
+    linkWorkspace: Effect.fn("SemanggiService.linkWorkspace")((context, input) =>
+      context.environmentId !== input.environmentId
+        ? Effect.fail(
+            new Repository.SemanggiValidationError({
+              message: "Workspace environment does not match audit context.",
+            }),
+          )
+        : audited(
+            context,
+            "workspace.link",
+            "project",
+            input.projectId,
+            Repository.linkWorkspace(input),
+            () => 1,
+          ),
+    ),
+    unlinkWorkspace: Effect.fn("SemanggiService.unlinkWorkspace")((context, input) =>
+      context.environmentId !== input.environmentId
+        ? Effect.fail(
+            new Repository.SemanggiValidationError({
+              message: "Workspace environment does not match audit context.",
+            }),
+          )
+        : audited(
+            context,
+            "workspace.unlink",
+            "project",
+            input.projectId,
+            Repository.unlinkWorkspace(input),
+            () => 1,
+          ),
     ),
     createSession: Effect.fn("SemanggiService.createSession")((context, input) =>
       audited(

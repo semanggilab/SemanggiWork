@@ -66,7 +66,7 @@ const identity = (input: PrepareCreate) =>
     )
     .digest("hex");
 
-export const get = Effect.fn("semanggi.createSaga.get")(function* (
+const get = Effect.fn("semanggi.createSaga.get")(function* (
   environmentId: string,
   key: string,
 ) {

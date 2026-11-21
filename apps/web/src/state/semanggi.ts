@@ -16,3 +16,20 @@ export const semanggiMutate = createEnvironmentRpcCommand(connectionAtomRuntime,
   label: "semanggi:mutate",
   tag: WS_METHODS.semanggiMutate,
 });
+
+export const semanggiSessionMove = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "semanggi:session-move",
+  tag: WS_METHODS.semanggiSessionMove,
+});
+
+export const semanggiSearch = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "semanggi:search",
+  tag: WS_METHODS.semanggiSearch,
+  staleTimeMs: 5_000,
+  idleTtlMs: 60_000,
+});
+
+export const semanggiOpenSource = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "semanggi:open-source",
+  tag: WS_METHODS.semanggiOpenSource,
+});

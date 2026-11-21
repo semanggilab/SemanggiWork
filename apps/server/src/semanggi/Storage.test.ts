@@ -23,7 +23,7 @@ it.effect(
       yield* Effect.sync(() => {
         const db = new NodeSqlite.DatabaseSync(path);
         db.exec(
-          "ALTER TABLE sh_reconciliation_items DROP COLUMN will_create; ALTER TABLE sh_reconciliation_items DROP COLUMN session_id; ALTER TABLE sh_ingestion_checkpoints RENAME TO sh_ingestion_checkpoints_v15_seed; CREATE TABLE sh_ingestion_checkpoints (environment_id TEXT PRIMARY KEY, cursor INTEGER NOT NULL CHECK (cursor >= 0), high_water INTEGER NOT NULL CHECK (high_water >= 0), state TEXT NOT NULL CHECK (state IN ('CATCHING_UP', 'RECONCILING'))); INSERT INTO sh_ingestion_checkpoints SELECT environment_id,cursor,high_water,state FROM sh_ingestion_checkpoints_v15_seed; DROP TABLE sh_ingestion_checkpoints_v15_seed; DELETE FROM sh_migrations WHERE version IN (14,15,16)",
+          "ALTER TABLE sh_reconciliation_items DROP COLUMN will_create; ALTER TABLE sh_reconciliation_items DROP COLUMN session_id; ALTER TABLE sh_ingestion_checkpoints RENAME TO sh_ingestion_checkpoints_v15_seed; CREATE TABLE sh_ingestion_checkpoints (environment_id TEXT PRIMARY KEY, cursor INTEGER NOT NULL CHECK (cursor >= 0), high_water INTEGER NOT NULL CHECK (high_water >= 0), state TEXT NOT NULL CHECK (state IN ('CATCHING_UP', 'RECONCILING'))); INSERT INTO sh_ingestion_checkpoints SELECT environment_id,cursor,high_water,state FROM sh_ingestion_checkpoints_v15_seed; DROP TABLE sh_ingestion_checkpoints_v15_seed; DELETE FROM sh_migrations WHERE version IN (14,15,16,17,18)",
         );
         db.close();
       });
@@ -244,20 +244,35 @@ it.effect("moves a section subtree atomically and rejects stale, cyclic, and too
     yield* Repository.createSection({ id: "a", projectId: "p", parentId: null, name: "A" });
     yield* Repository.createSection({ id: "b", projectId: "p", parentId: "a", name: "B" });
     yield* Repository.createSection({ id: "c", projectId: "p", parentId: "b", name: "C" });
-    yield* Repository.createSection({ id: "target", projectId: "p", parentId: null, name: "Target" });
+    yield* Repository.createSection({
+      id: "target",
+      projectId: "p",
+      parentId: null,
+      name: "Target",
+    });
     assert.deepEqual(
       yield* Repository.moveSectionSubtree({ id: "a", parentId: "target", expectedRevision: 1 }),
       { revision: 2 },
     );
-    const tree = yield* sql<{ id: string; parent_id: string | null; depth: number }>`SELECT id,parent_id,depth FROM sh_sections WHERE id IN ('a','b','c') ORDER BY id`;
+    const tree = yield* sql<{
+      id: string;
+      parent_id: string | null;
+      depth: number;
+    }>`SELECT id,parent_id,depth FROM sh_sections WHERE id IN ('a','b','c') ORDER BY id`;
     assert.deepEqual(tree, [
       { id: "a", parent_id: "target", depth: 2 },
       { id: "b", parent_id: "a", depth: 3 },
       { id: "c", parent_id: "b", depth: 4 },
     ]);
-    yield* Effect.flip(Repository.moveSectionSubtree({ id: "a", parentId: null, expectedRevision: 1 }));
-    yield* Effect.flip(Repository.moveSectionSubtree({ id: "a", parentId: "c", expectedRevision: 2 }));
-    yield* Effect.flip(Repository.moveSectionSubtree({ id: "target", parentId: "c", expectedRevision: 1 }));
+    yield* Effect.flip(
+      Repository.moveSectionSubtree({ id: "a", parentId: null, expectedRevision: 1 }),
+    );
+    yield* Effect.flip(
+      Repository.moveSectionSubtree({ id: "a", parentId: "c", expectedRevision: 2 }),
+    );
+    yield* Effect.flip(
+      Repository.moveSectionSubtree({ id: "target", parentId: "c", expectedRevision: 1 }),
+    );
   }).pipe(Effect.provide(layerFromPath(":memory:"))),
 );
 
@@ -399,7 +414,7 @@ it.effect("reopens a migrated on-disk profile and rejects a future migration", (
       }>`SELECT version FROM sh_migrations ORDER BY version`;
       assert.deepEqual(
         versions.map(({ version }) => version),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
       );
       assert.isTrue((yield* Repository.listProjects()).some(({ id }) => id === "persisted"));
       const commands = yield* sql`SELECT * FROM sh_commands`;
@@ -459,7 +474,7 @@ it.effect("upgrades the v14 checkpoint constraint and permits LIVE only after mi
     yield* Effect.sync(() => {
       const db = new NodeSqlite.DatabaseSync(path);
       db.exec(
-        "ALTER TABLE sh_ingestion_checkpoints RENAME TO sh_ingestion_checkpoints_v15_seed; CREATE TABLE sh_ingestion_checkpoints (environment_id TEXT PRIMARY KEY, cursor INTEGER NOT NULL CHECK (cursor >= 0), high_water INTEGER NOT NULL CHECK (high_water >= 0), state TEXT NOT NULL CHECK (state IN ('CATCHING_UP', 'RECONCILING'))); INSERT INTO sh_ingestion_checkpoints VALUES ('env',4,4,'CATCHING_UP'); DROP TABLE sh_ingestion_checkpoints_v15_seed; DELETE FROM sh_migrations WHERE version IN (15,16)",
+        "ALTER TABLE sh_ingestion_checkpoints RENAME TO sh_ingestion_checkpoints_v15_seed; CREATE TABLE sh_ingestion_checkpoints (environment_id TEXT PRIMARY KEY, cursor INTEGER NOT NULL CHECK (cursor >= 0), high_water INTEGER NOT NULL CHECK (high_water >= 0), state TEXT NOT NULL CHECK (state IN ('CATCHING_UP', 'RECONCILING'))); INSERT INTO sh_ingestion_checkpoints VALUES ('env',4,4,'CATCHING_UP'); DROP TABLE sh_ingestion_checkpoints_v15_seed; DELETE FROM sh_migrations WHERE version IN (15,16,17,18)",
       );
       db.close();
     });

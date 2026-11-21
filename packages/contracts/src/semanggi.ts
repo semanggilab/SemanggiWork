@@ -50,25 +50,98 @@ export const SemanggiSection = Schema.Struct({
   depth: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 })),
   revision: PositiveInt,
 });
+export const SemanggiWorkspaceLink = Schema.Struct({
+  projectId: NonEmptyString,
+  t3ProjectId: NonEmptyString,
+  isDefault: Schema.Boolean,
+});
 export const SemanggiCatalog = Schema.Struct({
   projects: Schema.Array(SemanggiProject),
+  workspaceLinks: Schema.Array(SemanggiWorkspaceLink),
   sectionsByProject: Schema.Array(
     Schema.Struct({ projectId: NonEmptyString, sections: Schema.Array(SemanggiSection) }),
   ),
-  sessions: Schema.Array(Schema.Struct({
-    sessionId: NonEmptyString, projectId: NonEmptyString, sectionId: Schema.NullOr(NonEmptyString),
-    mode: SemanggiMode, revision: PositiveInt, threadId: NonEmptyString,
-  })),
+  sessions: Schema.Array(
+    Schema.Struct({
+      sessionId: NonEmptyString,
+      projectId: NonEmptyString,
+      sectionId: Schema.NullOr(NonEmptyString),
+      mode: SemanggiMode,
+      revision: PositiveInt,
+      threadId: NonEmptyString,
+    }),
+  ),
 });
 
 export const SemanggiDomainMutation = Schema.Union([
-  Schema.Struct({ requestId: NonEmptyString, type: Schema.Literal("project.create"), id: NonEmptyString, name: NonEmptyString }),
-  Schema.Struct({ requestId: NonEmptyString, type: Schema.Literal("project.rename"), id: NonEmptyString, name: NonEmptyString, expectedRevision: PositiveInt }),
-  Schema.Struct({ requestId: NonEmptyString, type: Schema.Literal("project.archive"), id: NonEmptyString, archived: Schema.Boolean, expectedRevision: PositiveInt }),
-  Schema.Struct({ requestId: NonEmptyString, type: Schema.Literal("section.create"), id: NonEmptyString, projectId: NonEmptyString, parentId: Schema.NullOr(NonEmptyString), name: NonEmptyString }),
-  Schema.Struct({ requestId: NonEmptyString, type: Schema.Literal("section.rename"), id: NonEmptyString, name: NonEmptyString, expectedRevision: PositiveInt }),
-  Schema.Struct({ requestId: NonEmptyString, type: Schema.Literal("section.move"), id: NonEmptyString, parentId: Schema.NullOr(NonEmptyString), expectedRevision: PositiveInt }),
-  Schema.Struct({ requestId: NonEmptyString, type: Schema.Literal("section.delete"), id: NonEmptyString, expectedRevision: PositiveInt }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("project.create"),
+    id: NonEmptyString,
+    name: NonEmptyString,
+  }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("project.rename"),
+    id: NonEmptyString,
+    name: NonEmptyString,
+    expectedRevision: PositiveInt,
+  }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("project.archive"),
+    id: NonEmptyString,
+    archived: Schema.Boolean,
+    expectedRevision: PositiveInt,
+  }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("section.create"),
+    id: NonEmptyString,
+    projectId: NonEmptyString,
+    parentId: Schema.NullOr(NonEmptyString),
+    name: NonEmptyString,
+  }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("section.rename"),
+    id: NonEmptyString,
+    name: NonEmptyString,
+    expectedRevision: PositiveInt,
+  }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("section.move"),
+    id: NonEmptyString,
+    parentId: Schema.NullOr(NonEmptyString),
+    expectedRevision: PositiveInt,
+  }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("section.delete"),
+    id: NonEmptyString,
+    expectedRevision: PositiveInt,
+  }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("section.reorder"),
+    id: NonEmptyString,
+    direction: Schema.Literals(["up", "down"]),
+    expectedRevision: PositiveInt,
+  }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("workspace.link"),
+    projectId: NonEmptyString,
+    t3ProjectId: NonEmptyString,
+    isDefault: Schema.Boolean,
+  }),
+  Schema.Struct({
+    requestId: NonEmptyString,
+    type: Schema.Literal("workspace.unlink"),
+    projectId: NonEmptyString,
+    t3ProjectId: NonEmptyString,
+  }),
 ]);
 export type SemanggiDomainMutation = typeof SemanggiDomainMutation.Type;
 export const SemanggiDomainMutationResult = Schema.Struct({ revision: PositiveInt });

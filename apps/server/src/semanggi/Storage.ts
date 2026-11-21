@@ -27,7 +27,7 @@ const setup = Layer.effectDiscard(
         const versions = yield* sql<{
           version: number;
         }>`SELECT version FROM sh_migrations ORDER BY version`;
-        if (versions.some(({ version }, index) => version !== index + 1 || version > 16)) {
+        if (versions.some(({ version }, index) => version !== index + 1 || version > 18)) {
           return yield* new SemanggiMigrationError({
             message: "Unsupported Semanggi database migration version.",
           });
@@ -301,6 +301,37 @@ const setup = Layer.effectDiscard(
             BEGIN SELECT RAISE(ABORT, 'section has dependent records'); END`;
           yield* sql`CREATE INDEX IF NOT EXISTS sh_sections_ordered ON sh_sections(project_id, parent_id, position)`;
           yield* sql`INSERT INTO sh_migrations(version) VALUES (16)`;
+        }
+        if (!versions.some(({ version }) => version === 17)) {
+          yield* sql`CREATE TABLE IF NOT EXISTS sh_workspace_links (
+            project_id TEXT NOT NULL REFERENCES sh_projects(id),
+            environment_id TEXT NOT NULL,
+            t3_project_id TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0,1)),
+            PRIMARY KEY (project_id, environment_id, t3_project_id)
+          )`;
+          yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS sh_workspace_links_default
+            ON sh_workspace_links(project_id, environment_id) WHERE is_default = 1`;
+          yield* sql`INSERT INTO sh_migrations(version) VALUES (17)`;
+        }
+        if (!versions.some(({ version }) => version === 18)) {
+          yield* sql`CREATE TABLE IF NOT EXISTS sh_vector_chunks (
+            generation TEXT NOT NULL, environment_id TEXT NOT NULL, thread_id TEXT NOT NULL,
+            message_id TEXT NOT NULL, ordinal INTEGER NOT NULL CHECK(ordinal >= 0), record_id TEXT NOT NULL,
+            source_sequence INTEGER NOT NULL, source_hash TEXT NOT NULL, chunker_version TEXT NOT NULL,
+            start_offset INTEGER NOT NULL, end_offset INTEGER NOT NULL, content_hash TEXT NOT NULL,
+            record_version INTEGER NOT NULL CHECK(record_version > 0), deleted INTEGER NOT NULL CHECK(deleted IN (0,1)),
+            PRIMARY KEY(generation, environment_id, thread_id, message_id, ordinal),
+            UNIQUE(generation, record_id)
+          )`;
+          yield* sql`CREATE TABLE IF NOT EXISTS sh_vector_jobs (
+            operation_id TEXT PRIMARY KEY, generation TEXT NOT NULL, record_id TEXT NOT NULL,
+            record_version INTEGER NOT NULL CHECK(record_version > 0), content_hash TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('UPSERT','DELETE')),
+            UNIQUE(generation, record_id),
+            FOREIGN KEY(generation, record_id) REFERENCES sh_vector_chunks(generation, record_id)
+          )`;
+          yield* sql`INSERT INTO sh_migrations(version) VALUES (18)`;
         }
         const integrity = yield* sql<{ integrity_check: string }>`PRAGMA integrity_check`;
         const foreignKeys = yield* sql`PRAGMA foreign_key_check`;
