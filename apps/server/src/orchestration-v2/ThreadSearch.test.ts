@@ -959,6 +959,38 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
 });
 
 it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
+  it.effect("applies a thread scope before title and message candidate limits", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:scoped-candidates");
+      const scoped = ThreadId.make("thread:scoped-message");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(scoped, project, { title: "Unrelated" }),
+          message(scoped, "scoped-message", "user", "target note"),
+          ...Array.from({ length: 60 }, (_, index) =>
+            thread(ThreadId.make(`thread:outside-${index}`), project, { title: `Target ${index}` }),
+          ),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const matches = yield* search.searchThreads({
+        query: "target",
+        limit: 5,
+        threadIds: [scoped],
+      });
+      assert.deepEqual(
+        matches.matches.map(({ threadId }) => threadId),
+        [scoped],
+      );
+      const none = yield* search.searchThreads({ query: "target", limit: 5, threadIds: [] });
+      assert.deepEqual(none.matches, []);
+    }),
+  );
+
   it.effect("keeps room for a message-only thread behind many titled ones", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;

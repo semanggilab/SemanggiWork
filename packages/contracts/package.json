@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "ajv": "8.20.0",
     "vite-plus": "catalog:"
   }
 }

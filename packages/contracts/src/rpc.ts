@@ -37,6 +37,18 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
+import {
+  SemanggiCapabilities,
+  SemanggiRequestError,
+  SemanggiSessionMoveResult,
+  SemanggiCreateStatus,
+  SemanggiPendingCreatesResult,
+  SemanggiSearchResult,
+  SemanggiOpenSourceResult,
+  SemanggiCatalog,
+  SemanggiDomainMutation,
+  SemanggiDomainMutationResult,
+} from "./semanggi.ts";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
@@ -496,6 +508,15 @@ export const WS_METHODS = {
   deviceAction: "device.action",
 
   serverProbe: "server.probe",
+  semanggiCapabilities: "semanggi.capabilities",
+  semanggiCatalog: "semanggi.catalog",
+  semanggiMutate: "semanggi.mutate",
+  semanggiSessionMove: "semanggi.session.move",
+  semanggiCreateThread: "semanggi.thread.create",
+  semanggiCreateStatus: "semanggi.thread.createStatus",
+  semanggiPendingCreates: "semanggi.thread.pendingCreates",
+  semanggiSearch: "semanggi.search",
+  semanggiOpenSource: "semanggi.search.openSource",
   serverGetConfig: "server.getConfig",
   serverGetNpmRelease: "server.getNpmRelease",
   serverRefreshProviders: "server.refreshProviders",
@@ -630,6 +651,59 @@ const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   payload: Schema.Struct({}),
   success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
+});
+
+const WsSemanggiCapabilitiesRpc = Rpc.make(WS_METHODS.semanggiCapabilities, {
+  payload: Schema.Struct({}),
+  success: SemanggiCapabilities,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsSemanggiCatalogRpc = Rpc.make(WS_METHODS.semanggiCatalog, {
+  payload: Schema.Struct({}),
+  success: SemanggiCatalog,
+  error: Schema.Union([SemanggiRequestError, EnvironmentAuthorizationError]),
+});
+const WsSemanggiMutateRpc = Rpc.make(WS_METHODS.semanggiMutate, {
+  payload: SemanggiDomainMutation,
+  success: SemanggiDomainMutationResult,
+  error: Schema.Union([SemanggiRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsSemanggiSessionMoveRpc = Rpc.make(WS_METHODS.semanggiSessionMove, {
+  payload: Schema.Unknown,
+  success: SemanggiSessionMoveResult,
+  error: Schema.Union([SemanggiRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsSemanggiCreateThreadRpc = Rpc.make(WS_METHODS.semanggiCreateThread, {
+  payload: Schema.Unknown,
+  success: SemanggiCreateStatus,
+  error: Schema.Union([SemanggiRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsSemanggiCreateStatusRpc = Rpc.make(WS_METHODS.semanggiCreateStatus, {
+  payload: Schema.Unknown,
+  success: SemanggiCreateStatus,
+  error: Schema.Union([SemanggiRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsSemanggiPendingCreatesRpc = Rpc.make(WS_METHODS.semanggiPendingCreates, {
+  payload: Schema.Unknown,
+  success: SemanggiPendingCreatesResult,
+  error: Schema.Union([SemanggiRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsSemanggiSearchRpc = Rpc.make(WS_METHODS.semanggiSearch, {
+  payload: Schema.Unknown,
+  success: SemanggiSearchResult,
+  error: Schema.Union([SemanggiRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsSemanggiOpenSourceRpc = Rpc.make(WS_METHODS.semanggiOpenSource, {
+  payload: Schema.Unknown,
+  success: SemanggiOpenSourceResult,
+  error: Schema.Union([SemanggiRequestError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
@@ -1990,6 +2064,15 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 export const WsRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
+  WsSemanggiCapabilitiesRpc,
+  WsSemanggiCatalogRpc,
+  WsSemanggiMutateRpc,
+  WsSemanggiSessionMoveRpc,
+  WsSemanggiCreateThreadRpc,
+  WsSemanggiCreateStatusRpc,
+  WsSemanggiPendingCreatesRpc,
+  WsSemanggiSearchRpc,
+  WsSemanggiOpenSourceRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,

@@ -27,6 +27,12 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
+import * as Semanggi from "./semanggi/Service.ts";
+import * as SemanggiNativeAdapter from "./semanggi/NativeAdapter.ts";
+import * as SemanggiIntegration from "./semanggi/NativeIntegrationService.ts";
+import * as SemanggiCreateRecoveryWorker from "./semanggi/CreateRecoveryWorker.ts";
+import * as SemanggiIngestionWorker from "./semanggi/IngestionWorker.ts";
+import * as SemanggiCommandReceipts from "./orchestration-v2/CommandReceiptStore.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 import {
@@ -623,6 +629,14 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 );
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
+  Semanggi.layerConfig,
+  SemanggiIntegration.layerConfig.pipe(
+    Layer.provide(
+      SemanggiNativeAdapter.layer.pipe(
+        Layer.provide(SemanggiCommandReceipts.layerFromApplicationReceipts),
+      ),
+    ),
+  ),
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
@@ -731,7 +745,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
-const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
+const layerRuntimeDependenciesBase = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
@@ -744,6 +758,13 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
+);
+
+const layerRuntimeDependencies = Layer.merge(
+  layerRuntimeDependenciesBase,
+  Layer.mergeAll(SemanggiCreateRecoveryWorker.layer, SemanggiIngestionWorker.layer).pipe(
+    Layer.provide(layerRuntimeDependenciesBase),
+  ),
 );
 
 const layerCommandReadiness = HttpRouter.middleware(

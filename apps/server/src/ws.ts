@@ -4,6 +4,10 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as Semanggi from "./semanggi/Service.ts";
+import * as SemanggiIntegration from "./semanggi/NativeIntegrationService.ts";
+import * as SemanggiRepository from "./semanggi/Repository.ts";
+import { SemanggiRequestError } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1353,6 +1357,10 @@ export const layerWsRpc = (
   Layer.effectContext(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const semanggi = yield* Semanggi.SemanggiService;
+      const semanggiIntegration = yield* Effect.serviceOption(
+        SemanggiIntegration.NativeIntegrationService,
+      );
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -2309,6 +2317,134 @@ export const layerWsRpc = (
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
+        [WS_METHODS.semanggiCapabilities]: (_input) =>
+          Effect.succeed({
+            protocolVersion: 1 as const,
+            sessions: true,
+            ingestion: Option.isSome(semanggiIntegration),
+            search: Option.isSome(semanggiIntegration),
+          }),
+        [WS_METHODS.semanggiCatalog]: (_input) =>
+          Effect.gen(function* () {
+            const projects = yield* semanggi.listProjects();
+            const sessions = yield* semanggi.listCatalogSessions(environmentId);
+            const sectionsByProject = yield* Effect.forEach(projects, (project) =>
+              semanggi.listSections(project.id).pipe(
+                Effect.map((sections) => ({
+                  projectId: project.id,
+                  sections: sections.map((section) => ({
+                    id: section.id,
+                    parentId: section.parent_id,
+                    name: section.name,
+                    depth: section.depth,
+                    revision: section.revision,
+                  })),
+                })),
+              ),
+            );
+            return {
+              projects,
+              sectionsByProject,
+              sessions: sessions.map((session) => ({
+                sessionId: session.id, projectId: session.project_id, sectionId: session.section_id,
+                mode: session.mode, revision: session.revision, threadId: session.thread_id,
+              })),
+            };
+          }).pipe(Effect.mapError(() => new SemanggiRequestError({ reason: "storage_error" }))),
+        [WS_METHODS.semanggiMutate]: (input) =>
+          serverEnvironment.getDescriptor.pipe(
+            Effect.flatMap(({ environmentId }) => {
+              const context = {
+                actorId: currentSession.subject,
+                environmentId,
+                requestId: input.requestId,
+              };
+              switch (input.type) {
+                case "project.create":
+                  return semanggi.createProject(context, input).pipe(Effect.as({ revision: 1 }));
+                case "project.rename":
+                  return semanggi.renameProject(context, input).pipe(Effect.map((revision) => ({ revision })));
+                case "project.archive":
+                  return semanggi.setProjectArchived(context, input).pipe(Effect.map((revision) => ({ revision })));
+                case "section.create":
+                  return semanggi.createSection(context, input).pipe(Effect.as({ revision: 1 }));
+                case "section.rename":
+                  return semanggi.renameSection(context, input).pipe(Effect.map((revision) => ({ revision })));
+                case "section.move":
+                  return semanggi.moveSectionSubtree(context, input);
+                case "section.delete":
+                  return semanggi.deleteLeafSection(context, input).pipe(Effect.as({ revision: input.expectedRevision }));
+              }
+            }),
+            Effect.mapError((error) =>
+              new SemanggiRequestError({
+                reason:
+                  error instanceof SemanggiRepository.SemanggiRevisionConflict
+                    ? "conflict"
+                    : Schema.is(SemanggiRepository.SemanggiValidationError)(error)
+                      ? "invalid_request"
+                      : "storage_error",
+              }),
+            ),
+          ),
+        [WS_METHODS.semanggiSessionMove]: (input) =>
+          serverEnvironment.getDescriptor.pipe(
+            Effect.flatMap(({ environmentId }) =>
+              semanggi.moveSession(currentSession.subject, environmentId, input),
+            ),
+          ),
+        [WS_METHODS.semanggiCreateThread]: (input) =>
+          Option.isNone(semanggiIntegration)
+            ? Effect.fail(new SemanggiRequestError({ reason: "storage_error" }))
+            : serverEnvironment.getDescriptor.pipe(
+                Effect.flatMap(({ environmentId }) =>
+                  semanggiIntegration.value.startCreate(
+                    currentSession.subject,
+                    environmentId,
+                    input,
+                  ),
+                ),
+              ),
+        [WS_METHODS.semanggiCreateStatus]: (input) =>
+          Option.isNone(semanggiIntegration)
+            ? Effect.fail(new SemanggiRequestError({ reason: "storage_error" }))
+            : serverEnvironment.getDescriptor.pipe(
+                Effect.flatMap(({ environmentId }) =>
+                  semanggiIntegration.value.getCreateStatus(
+                    currentSession.subject,
+                    environmentId,
+                    input,
+                  ),
+                ),
+              ),
+        [WS_METHODS.semanggiPendingCreates]: (input) =>
+          Option.isNone(semanggiIntegration)
+            ? Effect.fail(new SemanggiRequestError({ reason: "storage_error" }))
+            : serverEnvironment.getDescriptor.pipe(
+                Effect.flatMap(({ environmentId }) =>
+                  semanggiIntegration.value.listPendingCreates(
+                    currentSession.subject,
+                    environmentId,
+                    input,
+                  ),
+                ),
+              ),
+        [WS_METHODS.semanggiSearch]: (input) =>
+          Option.isNone(semanggiIntegration)
+            ? Effect.fail(new SemanggiRequestError({ reason: "storage_error" }))
+            : serverEnvironment.getDescriptor.pipe(
+                Effect.flatMap(({ environmentId }) =>
+                  semanggiIntegration.value.searchPublic(environmentId, input),
+                ),
+              ),
+        [WS_METHODS.semanggiOpenSource]: (input) =>
+          Option.isNone(semanggiIntegration)
+            ? Effect.fail(new SemanggiRequestError({ reason: "storage_error" }))
+            : serverEnvironment.getDescriptor.pipe(
+                Effect.flatMap(({ environmentId }) =>
+                  semanggiIntegration.value.openSearchSourcePublic(environmentId, input),
+                ),
+              ),
         [WS_METHODS.serverGetConfig]: (_input) =>
           loadServerConfig({
             usageLimitsCommand: false,

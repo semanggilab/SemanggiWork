@@ -29,6 +29,10 @@ import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ApplicationEventStore from "../persistence/OrchestrationEventStore.ts";
+import * as SemanggiStorage from "../semanggi/Storage.ts";
+import * as SemanggiIngestion from "../semanggi/ReplayIngestion.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -726,6 +730,43 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
               .filter((checkpoint) => checkpoint.status === "ready")
               .map((checkpoint) => checkpoint.id),
             [history.checkpointId(0), history.checkpointId(8)],
+          );
+        }),
+    );
+
+    it.effect(
+      "emits rollback invalidations that Semanggi replays from the native event store",
+      () =>
+        Effect.gen(function* () {
+          const history = yield* seedRollbackHistory;
+          yield* history.rollback(2);
+          const rollbackEvents = history.committed.filter(
+            (event) => event.type === "run.updated" || event.type === "node.updated",
+          );
+          assert.isAbove(rollbackEvents.length, 0);
+          yield* Effect.gen(function* () {
+            const source = yield* ApplicationEventStore.OrchestrationEventStore;
+            const sql = yield* SqlClient.SqlClient;
+            yield* source.appendAgentEvents({ events: rollbackEvents });
+            const replay = yield* SemanggiIngestion.ingestNextPage({
+              environmentId: "semanggi-rollback",
+              limit: 100,
+            });
+            assert.equal(replay.state, "CATCHING_UP");
+            assert.deepEqual(
+              yield* sql`SELECT thread_id,source_sequence FROM sh_thread_refresh_queue`,
+              [{ thread_id: history.threadId, source_sequence: replay.cursor }],
+            );
+          }).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                ApplicationEventStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+                SemanggiStorage.layerFromPath(":memory:"),
+                Layer.succeed(ManagedProjectFolders.ManagedProjectFolders, {
+                  isScratchProject: () => Effect.succeed(false),
+                } as never),
+              ),
+            ),
           );
         }),
     );

@@ -3,6 +3,7 @@ import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runti
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { describe, expect, it } from "vite-plus/test";
+import { followSidebarThreadMode } from "./sidebar/semanggiMode";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -60,6 +61,23 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("sidebar conversation mode", () => {
+  it("follows newly opened threads while preserving an explicit mode selection", () => {
+    const initial = { routeKey: null, routeMode: null, mode: "code" } as const;
+    const work = followSidebarThreadMode(initial, "work-thread", "work");
+    expect(work.mode).toBe("work");
+    const manuallySelected = { ...work, mode: "code" } as const;
+    expect(followSidebarThreadMode(manuallySelected, "work-thread", "work")).toBe(manuallySelected);
+    expect(followSidebarThreadMode(manuallySelected, "another-work-thread", "work").mode).toBe(
+      "work",
+    );
+    expect(followSidebarThreadMode(work, "code-thread", "code").mode).toBe("code");
+    const loading = followSidebarThreadMode(work, "unloaded-thread", null);
+    expect(loading.mode).toBe("work");
+    expect(followSidebarThreadMode(loading, "unloaded-thread", "code").mode).toBe("code");
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;

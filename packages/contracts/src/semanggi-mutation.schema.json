@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Session move mutation v1",
+  "type": "object",
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "environmentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "environmentId",
+        "projectId"
+      ],
+      "additionalProperties": false
+    },
+    "expectedRevision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "session.move"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sectionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "sessionId",
+        "projectId",
+        "sectionId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "requestId",
+    "idempotencyKey",
+    "scope",
+    "expectedRevision",
+    "operation"
+  ],
+  "additionalProperties": false
+}

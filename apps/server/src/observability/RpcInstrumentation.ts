@@ -33,6 +33,13 @@ const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: "orchestrationV2",
   [WS_METHODS.projectsMutate]: "orchestration",
   [WS_METHODS.serverProbe]: "server",
+  [WS_METHODS.semanggiCapabilities]: "semanggi",
+  [WS_METHODS.semanggiSessionMove]: "semanggi",
+  [WS_METHODS.semanggiCreateThread]: "semanggi",
+  [WS_METHODS.semanggiCreateStatus]: "semanggi",
+  [WS_METHODS.semanggiPendingCreates]: "semanggi",
+  [WS_METHODS.semanggiSearch]: "semanggi",
+  [WS_METHODS.semanggiOpenSource]: "semanggi",
   [WS_METHODS.serverGetConfig]: "server",
   [WS_METHODS.serverGetNpmRelease]: "server",
   [WS_METHODS.serverRefreshProviders]: "server",
@@ -221,6 +228,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeServerConfig]: "server",
   [WS_METHODS.subscribeServerLifecycle]: "server",
   [WS_METHODS.subscribeAuthAccess]: "auth",
+  [WS_METHODS.semanggiCatalog]: "semanggi",
+  [WS_METHODS.semanggiMutate]: "semanggi",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

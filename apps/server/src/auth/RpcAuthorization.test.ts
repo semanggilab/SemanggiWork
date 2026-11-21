@@ -31,6 +31,17 @@ import {
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
+  it("requires operate scope for Semanggi create and recovery status", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.semanggiCreateThread)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.semanggiCreateStatus)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.semanggiPendingCreates)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
@@ -131,6 +142,186 @@ describe("RPC scope middleware", () => {
       expect(handled).toEqual([]);
     }).pipe(Effect.scoped),
   );
+});
+
+it.effect("rejects Semanggi capability discovery without read scope before the handler", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.semanggiCapabilities> =>
+        tag !== WS_METHODS.semanggiCapabilities,
+    ),
+  );
+  return Effect.gen(function* () {
+    let called = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.semanggiCapabilities, () =>
+            Effect.sync(() => {
+              called = true;
+              return {
+                protocolVersion: 1 as const,
+                sessions: false,
+                ingestion: false,
+                search: false,
+              };
+            }),
+          ),
+          RpcAuthorization.layer([]),
+        ),
+      ),
+    );
+    expect(yield* client[WS_METHODS.semanggiCapabilities]({}).pipe(Effect.flip)).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthOrchestrationReadScope,
+    });
+    expect(called).toBe(false);
+  }).pipe(Effect.scoped);
+});
+
+it.effect("rejects Semanggi mutations for a read-only session before the handler", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.semanggiSessionMove> =>
+        tag !== WS_METHODS.semanggiSessionMove,
+    ),
+  );
+  return Effect.gen(function* () {
+    let called = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.semanggiSessionMove, () =>
+            Effect.sync(() => {
+              called = true;
+              return { revision: 2 };
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    expect(yield* client[WS_METHODS.semanggiSessionMove]({}).pipe(Effect.flip)).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthOrchestrationOperateScope,
+    });
+    expect(called).toBe(false);
+  }).pipe(Effect.scoped);
+});
+
+it.effect("rejects Semanggi create and status RPCs for read-only sessions", () => {
+  const tested = [
+    WS_METHODS.semanggiCreateThread,
+    WS_METHODS.semanggiCreateStatus,
+    WS_METHODS.semanggiPendingCreates,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  return Effect.gen(function* () {
+    let calls = 0;
+    const result = {
+      state: "BOUND" as const,
+      sessionId: "session",
+      threadId: "thread",
+      revision: 1,
+    };
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.semanggiCreateThread, () =>
+            Effect.sync(() => {
+              calls++;
+              return result;
+            }),
+          ),
+          group.toLayerHandler(WS_METHODS.semanggiCreateStatus, () =>
+            Effect.sync(() => {
+              calls++;
+              return result;
+            }),
+          ),
+          group.toLayerHandler(WS_METHODS.semanggiPendingCreates, () =>
+            Effect.sync(() => {
+              calls++;
+              return { operations: [], hasMore: false };
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    const callsToTest = [
+      client[WS_METHODS.semanggiCreateThread]({}).pipe(Effect.asVoid),
+      client[WS_METHODS.semanggiCreateStatus]({}).pipe(Effect.asVoid),
+      client[WS_METHODS.semanggiPendingCreates]({}).pipe(Effect.asVoid),
+    ];
+    for (const call of callsToTest) {
+      expect(yield* call.pipe(Effect.flip)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthOrchestrationOperateScope,
+      });
+    }
+    expect(calls).toBe(0);
+  }).pipe(Effect.scoped);
+});
+
+it.effect("rejects Semanggi search and source opening without read permission", () => {
+  const tested = [WS_METHODS.semanggiSearch, WS_METHODS.semanggiOpenSource] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  return Effect.gen(function* () {
+    let calls = 0;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.semanggiSearch, () =>
+            Effect.sync(() => {
+              calls++;
+              return {
+                matches: [],
+                coverage: "partial" as const,
+                syncState: "UNINITIALIZED" as const,
+              };
+            }),
+          ),
+          group.toLayerHandler(WS_METHODS.semanggiOpenSource, () =>
+            Effect.sync(() => {
+              calls++;
+              return {
+                sessionId: "s",
+                threadId: "t",
+                projectId: "p",
+                mode: "work" as const,
+                sourceSequence: 1,
+              };
+            }),
+          ),
+          RpcAuthorization.layer([]),
+        ),
+      ),
+    );
+    expect(yield* client[WS_METHODS.semanggiSearch]({}).pipe(Effect.flip)).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthOrchestrationReadScope,
+    });
+    expect(yield* client[WS_METHODS.semanggiOpenSource]({}).pipe(Effect.flip)).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthOrchestrationReadScope,
+    });
+    expect(calls).toBe(0);
+  }).pipe(Effect.scoped);
 });
 
 describe("settings mutation authorization", () => {

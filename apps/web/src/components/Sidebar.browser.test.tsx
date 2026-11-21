@@ -37,6 +37,27 @@ function project(id: string): Project {
 }
 
 describe("sidebar header new thread", () => {
+  it("shows the Semanggi title above search and switches between Work and Code", async () => {
+    vi.mocked(useProjects).mockReturnValue([]);
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const title = screen.getByRole("link", { name: "Semanggi Hub home" });
+    const search = screen.getByRole("combobox", { name: "Search threads" });
+    const work = screen.getByRole("button", { name: "Work", exact: true });
+    const code = screen.getByRole("button", { name: "Code", exact: true });
+    await expect.element(title).toBeVisible();
+    await expect.element(search).toBeVisible();
+    await expect.element(code).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(work);
+    await expect.element(work).toHaveAttribute("aria-pressed", "true");
+    await expect.element(code).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(code);
+    await expect.element(code).toHaveAttribute("aria-pressed", "true");
+  });
+
   it.each([
     { mode: "normal", count: 2, shift: false, picker: true },
     { mode: "boring", count: 2, shift: false, picker: true },

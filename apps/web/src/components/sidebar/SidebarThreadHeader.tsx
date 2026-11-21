@@ -1,4 +1,12 @@
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import {
+  BriefcaseIcon,
+  Code2Icon,
+  FolderPlusIcon,
+  SearchIcon,
+  SquarePenIcon,
+  XIcon,
+} from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -11,6 +19,45 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { SidebarMode } from "./semanggiMode";
+
+export function SidebarBrandRow({
+  mode,
+  onModeChange,
+}: {
+  mode: SidebarMode;
+  onModeChange: (mode: SidebarMode) => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-2 px-2 pt-1 pb-2">
+      <Link
+        aria-label="Semanggi Hub home"
+        className="min-w-0 truncate rounded-sm text-lg tracking-tight text-sidebar-foreground outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset"
+        to="/"
+      >
+        <strong className="font-bold">Semanggi</strong> Hub
+      </Link>
+      <div role="group" aria-label="Conversation mode" className="flex shrink-0 items-center gap-1">
+        <SidebarHeaderIconButton
+          label="Work"
+          aria-pressed={mode === "work"}
+          isActive={mode === "work"}
+          onClick={() => onModeChange("work")}
+        >
+          <BriefcaseIcon />
+        </SidebarHeaderIconButton>
+        <SidebarHeaderIconButton
+          label="Code"
+          aria-pressed={mode === "code"}
+          isActive={mode === "code"}
+          onClick={() => onModeChange("code")}
+        >
+          <Code2Icon />
+        </SidebarHeaderIconButton>
+      </div>
+    </div>
+  );
+}
 
 export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
@@ -143,7 +190,7 @@ export function SidebarHeaderIconButton({
   children?: ReactNode;
 } & Omit<
   ComponentProps<typeof SidebarMenuButton>,
-  "children" | "className" | "tooltip" | "isActive" | "aria-label"
+  "children" | "className" | "tooltip" | "aria-label"
 >) {
   return (
     <Tooltip>

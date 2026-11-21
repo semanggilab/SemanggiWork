@@ -70,6 +70,7 @@ const SearchRequest = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
   /** Threads the caller already lists, left out before the hit limit. */
   excludedThreadIds: TokenList,
+  includedThreadIds: Schema.optionalKey(Schema.NullOr(TokenList)),
 });
 const SearchRow = Schema.Struct({
   messageRowid: Schema.Number,
@@ -109,7 +110,7 @@ const MESSAGE_SCAN_LIMIT = 20_000;
 function buildMessageSearch(
   query: string,
   hasIndex: boolean,
-): Omit<typeof SearchRequest.Type, "projectId" | "excludedThreadIds"> | null {
+): Omit<typeof SearchRequest.Type, "projectId" | "excludedThreadIds" | "includedThreadIds"> | null {
   const { long, short } = messageSearchTokens(query);
   if (long.length === 0) return null;
   // Two-character CJK words are too short for trigrams.
@@ -160,7 +161,13 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
 // The scan folds ASCII case only, so accent variants and non-ASCII case variants may not match.
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
-  { match, substrings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
+  {
+    match,
+    substrings,
+    projectId,
+    excludedThreadIds,
+    includedThreadIds,
+  }: typeof SearchRequest.Encoded,
 ) => sql`
     WITH eligible AS MATERIALIZED (
       SELECT threads.thread_id, threads.project_id
@@ -172,6 +179,7 @@ export const messageHitsQuery = (
         AND projects.deleted_at IS NULL
         AND (${projectId} IS NULL OR threads.project_id = ${projectId})
         AND threads.thread_id NOT IN (SELECT value FROM json_each(${excludedThreadIds}))
+        AND (${includedThreadIds ?? null} IS NULL OR threads.thread_id IN (SELECT value FROM json_each(${includedThreadIds ?? null})))
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
@@ -243,6 +251,7 @@ export interface ThreadSearchHit {
   readonly title: string;
   readonly source: "title" | OrchestrationThreadSearchSource;
   readonly snippet?: string;
+  readonly messageId?: MessageId;
   readonly messageCreatedAt?: string | null;
 }
 
@@ -258,7 +267,10 @@ export class ThreadSearch extends Context.Service<
      * palette ranks them, then message matches for the remaining threads.
      */
     readonly searchThreads: (
-      input: OrchestrationSearchThreadsInput & { readonly projectId?: ProjectId | undefined },
+      input: OrchestrationSearchThreadsInput & {
+        readonly projectId?: ProjectId | undefined;
+        readonly threadIds?: ReadonlyArray<ThreadId> | undefined;
+      },
     ) => Effect.Effect<{ readonly matches: ReadonlyArray<ThreadSearchHit> }, ThreadSearchError>;
     /**
      * The settled threads before `before` that clients omitting older settled threads should
@@ -318,9 +330,12 @@ export const make = Effect.gen(function* () {
   });
 
   const titleCandidates = SqlSchema.findAll({
-    Request: Schema.Struct({ projectId: Schema.NullOr(ProjectId) }),
+    Request: Schema.Struct({
+      projectId: Schema.NullOr(ProjectId),
+      threadIds: Schema.optionalKey(Schema.NullOr(TokenList)),
+    }),
     Result: TitleCandidateRow,
-    execute: ({ projectId }) => sql`
+    execute: ({ projectId, threadIds }) => sql`
       SELECT
         threads.payload_json AS thread,
         projects.title AS "projectTitle",
@@ -335,6 +350,7 @@ export const make = Effect.gen(function* () {
           IS NOT 'subagent'
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
         AND (${projectId} IS NULL OR threads.project_id = ${projectId})
+        AND (${threadIds ?? null} IS NULL OR threads.thread_id IN (SELECT value FROM json_each(${threadIds ?? null})))
     `,
   });
 
@@ -414,6 +430,7 @@ export const make = Effect.gen(function* () {
       readonly projectId: ProjectId | null;
       /** Threads the caller already lists, which must not use up the limit. */
       readonly excludedThreadIds?: ReadonlySet<ThreadId>;
+      readonly threadIds?: ReadonlyArray<ThreadId> | undefined;
       /** Off for an agent's search, which has no use for the user's picks. */
       readonly picks?: boolean;
     },
@@ -447,6 +464,7 @@ export const make = Effect.gen(function* () {
               ...messageSearch,
               projectId: input.projectId,
               excludedThreadIds: [...(input.excludedThreadIds ?? [])],
+              includedThreadIds: input.threadIds ?? null,
             });
       }),
     );
@@ -521,7 +539,9 @@ export const make = Effect.gen(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     // Agents call this rarely, and a project has hundreds of threads, not
     // millions, so ranking every active thread in memory stays cheap.
-    const candidates = yield* read(titleCandidates({ projectId: input.projectId ?? null }));
+    const candidates = yield* read(
+      titleCandidates({ projectId: input.projectId ?? null, threadIds: input.threadIds ?? null }),
+    );
     const subjectById = new Map(
       candidates.map((row): [ThreadId, ThreadSearchSubject] => [
         row.thread.id,
@@ -559,11 +579,12 @@ export const make = Effect.gen(function* () {
       limit: 50,
       projectId: input.projectId ?? null,
       excludedThreadIds: shown,
+      threadIds: input.threadIds,
       picks: false,
     });
     const messageHits = matches
       .filter((match) => subjectById.has(match.threadId))
-      .map(({ quality: _quality, hits: _hits, messageId: _messageId, ...match }) => ({
+      .map(({ quality: _quality, hits: _hits, ...match }) => ({
         ...match,
         title: subjectById.get(match.threadId)!.title,
       }));

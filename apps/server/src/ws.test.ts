@@ -22,6 +22,8 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Semanggi from "./semanggi/Service.ts";
+import * as SemanggiStorage from "./semanggi/Storage.ts";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
@@ -887,7 +889,12 @@ it.effect.each([
             yield* ServerBrowser.ServerBrowser,
             () => Effect.void,
             { secretReferences: true },
-          ).pipe(Layer.provide(configRpcServices)),
+          ).pipe(
+            Layer.provide(configRpcServices),
+            Layer.provide(
+              Semanggi.layer.pipe(Layer.provide(SemanggiStorage.layerFromPath(":memory:"))),
+            ),
+          ),
         ),
       );
       const requestId = RpcMessage.RequestId("config");
@@ -1108,7 +1115,12 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
           { secretReferences: true },
-        ).pipe(Layer.provide(configRpcServices)),
+        ).pipe(
+          Layer.provide(configRpcServices),
+          Layer.provide(
+            Semanggi.layer.pipe(Layer.provide(SemanggiStorage.layerFromPath(":memory:"))),
+          ),
+        ),
       ),
     );
     const configRequest = RpcMessage.RequestId("config");
