@@ -2326,42 +2326,47 @@ export const layerWsRpc = (
             search: Option.isSome(semanggiIntegration),
           }),
         [WS_METHODS.semanggiCatalog]: (_input) =>
-          Effect.fn("ws.semanggiCatalog")(function* () {
-            const projects = yield* semanggi.listProjects();
-            const sessions = yield* semanggi.listCatalogSessions(environmentId);
-            const workspaceLinks = yield* semanggi.listWorkspaceLinks(environmentId);
-            const sectionsByProject = yield* Effect.forEach(projects, (project) =>
-              semanggi.listSections(project.id).pipe(
-                Effect.map((sections) => ({
-                  projectId: project.id,
-                  sections: sections.map((section) => ({
-                    id: section.id,
-                    parentId: section.parent_id,
-                    name: section.name,
-                    depth: section.depth,
-                    revision: section.revision,
+          serverEnvironment.getDescriptor.pipe(
+            Effect.flatMap(
+              Effect.fn("ws.semanggiCatalog")(function* ({ environmentId }) {
+                const projects = yield* semanggi.listProjects();
+                const sessions = yield* semanggi.listCatalogSessions(environmentId);
+                const workspaceLinks = yield* semanggi.listWorkspaceLinks(environmentId);
+                const sectionsByProject = yield* Effect.forEach(projects, (project) =>
+                  semanggi.listSections(project.id).pipe(
+                    Effect.map((sections) => ({
+                      projectId: project.id,
+                      sections: sections.map((section) => ({
+                        id: section.id,
+                        parentId: section.parent_id,
+                        name: section.name,
+                        depth: section.depth,
+                        revision: section.revision,
+                      })),
+                    })),
+                  ),
+                );
+                return {
+                  projects,
+                  workspaceLinks: workspaceLinks.map((link) => ({
+                    projectId: link.project_id,
+                    t3ProjectId: link.t3_project_id,
+                    isDefault: link.is_default === 1,
                   })),
-                })),
-              ),
-            );
-            return {
-              projects,
-              workspaceLinks: workspaceLinks.map((link) => ({
-                projectId: link.project_id,
-                t3ProjectId: link.t3_project_id,
-                isDefault: link.is_default === 1,
-              })),
-              sectionsByProject,
-              sessions: sessions.map((session) => ({
-                sessionId: session.id,
-                projectId: session.project_id,
-                sectionId: session.section_id,
-                mode: session.mode,
-                revision: session.revision,
-                threadId: session.thread_id,
-              })),
-            };
-          })().pipe(Effect.mapError(() => new SemanggiRequestError({ reason: "storage_error" }))),
+                  sectionsByProject,
+                  sessions: sessions.map((session) => ({
+                    sessionId: session.id,
+                    projectId: session.project_id,
+                    sectionId: session.section_id,
+                    mode: session.mode,
+                    revision: session.revision,
+                    threadId: session.thread_id,
+                  })),
+                };
+              }),
+            ),
+            Effect.mapError(() => new SemanggiRequestError({ reason: "storage_error" })),
+          ),
         [WS_METHODS.semanggiMutate]: (input) =>
           serverEnvironment.getDescriptor.pipe(
             Effect.flatMap(({ environmentId }) => {

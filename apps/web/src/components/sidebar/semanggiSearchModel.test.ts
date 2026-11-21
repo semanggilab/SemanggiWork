@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { buildBreadcrumb, dedupeSearchMatches } from "./semanggiSearchModel";
 
 const m = (over: Record<string, unknown>) =>

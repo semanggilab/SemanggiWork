@@ -22,11 +22,10 @@ export const semanggiSessionMove = createEnvironmentRpcCommand(connectionAtomRun
   tag: WS_METHODS.semanggiSessionMove,
 });
 
-export const semanggiSearch = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+// Search and open-source are client-guarded RPCs, so they run as commands rather than query atoms.
+export const semanggiSearch = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "semanggi:search",
   tag: WS_METHODS.semanggiSearch,
-  staleTimeMs: 5_000,
-  idleTtlMs: 60_000,
 });
 
 export const semanggiOpenSource = createEnvironmentRpcCommand(connectionAtomRuntime, {

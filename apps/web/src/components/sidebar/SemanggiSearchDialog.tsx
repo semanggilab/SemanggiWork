@@ -1,13 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ThreadId, type EnvironmentId } from "@t3tools/contracts";
+import { ThreadId, type EnvironmentId, type SemanggiSearchResult } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { AsyncResult } from "effect/reactivity";
 import { PinIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useThreadShell } from "../../state/entities";
 import { semanggiCatalog, semanggiOpenSource, semanggiSearch } from "../../state/semanggi";
-import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "../ui/dialog";
@@ -44,22 +45,43 @@ export function SemanggiSearchDialog(props: {
   }, [text]);
 
   const query = open && debounced.length > 0 ? debounced : null;
-  const searchAtom = semanggiSearch({
-    environmentId,
-    input: { environmentId, projectId, query: query ?? "_", limit: 50 },
-  });
-  const searchResult = useAtomValue(searchAtom);
+  const queryKey = query === null ? null : `${projectId ?? "*"}\n${query}`;
+  const [outcome, setOutcome] = useState<{
+    readonly key: string;
+    readonly result: SemanggiSearchResult | "failed";
+  } | null>(null);
+  const runSearch = useStableCallback(useAtomCommand(semanggiSearch, { reportFailure: false }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the server search in step with the debounced query; a stale response is dropped on cleanup
+  useEffect(() => {
+    if (query === null || queryKey === null) return;
+    let stale = false;
+    void runSearch({
+      environmentId,
+      input: { environmentId, projectId, query, limit: 50 },
+    }).then((response) => {
+      if (stale) return;
+      setOutcome({
+        key: queryKey,
+        result: AsyncResult.isSuccess(response) ? response.value : "failed",
+      });
+    });
+    return () => {
+      stale = true;
+    };
+  }, [queryKey, query, projectId, environmentId, runSearch]);
   const catalog = AsyncResult.getOrElse(
     useAtomValue(semanggiCatalog({ environmentId, input: {} })),
     () => null,
   );
-  const value = query === null ? null : AsyncResult.getOrElse(searchResult, () => null);
-  const failed = query !== null && AsyncResult.isFailure(searchResult);
+  const current = outcome !== null && outcome.key === queryKey ? outcome.result : undefined;
+  const value = current === undefined || current === "failed" ? null : current;
+  const failed = current === "failed";
+  const loading = query !== null && current === undefined;
   const rows = value ? dedupeSearchMatches(value.matches, mode) : [];
   const safeActive = Math.min(active, Math.max(rows.length - 1, 0));
 
   const router = useRouter();
-  const openSource = useOrchestrationCommand(semanggiOpenSource, { reportFailure: true });
+  const openSource = useAtomCommand(semanggiOpenSource, { reportFailure: true });
   const openRow = (row: SearchRow) => {
     void openSource({
       environmentId,
@@ -69,8 +91,9 @@ export function SemanggiSearchDialog(props: {
         sessionId: row.sessionId,
         ...(row.messageId ? { messageId: row.messageId } : {}),
       },
-    }).then((result) => {
-      if (!result) return;
+    }).then((outcome) => {
+      if (!AsyncResult.isSuccess(outcome)) return;
+      const result = outcome.value;
       setOpen(false);
       void router.navigate({
         to: "/$environmentId/$threadId",
@@ -98,7 +121,7 @@ export function SemanggiSearchDialog(props: {
         ? "Offline. Search needs a connection to this environment."
         : failed
           ? "Search failed. Try again."
-          : searchResult.waiting && value === null
+          : loading
             ? "Searching…"
             : rows.length === 0
               ? "No matching threads."
@@ -109,7 +132,7 @@ export function SemanggiSearchDialog(props: {
       <Button
         variant="ghost-muted"
         size="xs"
-        aria-label="Search Semanggi threads"
+        aria-label={triggerLabel}
         onClick={() => setOpen(true)}
       >
         <SearchIcon /> Search
